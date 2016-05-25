@@ -76,6 +76,7 @@ class CoordSystem:
         return CoordSystem(self.space, new_matrix)
 
     def translation_origin(self, other_system):
+        assert self.space == other_system.space
         self_coords_to_other_coords = other_system.matrix_inv.dot(self.matrix)
         # Make sure it's a translation of the other system:
         assert (self_coords_to_other_coords[:3, :2] == np.array([[1, 0], [0, 1], [0, 0]])).all(), (
@@ -169,6 +170,9 @@ class Image:
     def dims(self):
         return self.array.shape[1::-1]
 
+    def area(self):
+        return self.width * self.height
+
     def resize(self, width=None, scale=None):
         if (not width) and scale:
             width = int(self.width * scale)
@@ -254,6 +258,10 @@ class Image:
     def blur(self, radius):
         return self.pipe(cv2.blur, (2 * radius + 1,) * 2)
 
+    def bilateral_blur(self, radius, sigma_color, sigma_space):
+        return self.pipe(cv2.bilateralFilter, d=2 * radius + 1,
+                         sigmaColor=sigma_color, sigmaSpace=sigma_space)
+
     def erode(self, radius):
         return self.pipe(cv2.erode, np.ones((2 * radius + 1,) * 2, np.uint8))
 
@@ -329,7 +337,7 @@ def composite(background_image, foreground_image, mask, inplace=False):
     return background_copy
 
 
-@jit(nopython=True)
+@jit(nopython=True, cache=True)
 def sum_arrs(arrs):
     base = np.zeros(arrs[0].shape)
     for arr in arrs:
@@ -337,17 +345,15 @@ def sum_arrs(arrs):
     return base
 
 
-@jit(nopython=True)
+@jit(nopython=True, cache=True)
 def sum_arrs_with_offsets(shape, arrs, offsets):
-    # print 'sum_arrs_with_offsets', shape
     base = np.zeros(shape)
     for arr, offset in zip(arrs, offsets):
-        # print base.shape, arr.shape
         base[offset[1]:offset[1] + arr.shape[0], offset[0]:offset[0] + arr.shape[1]] += arr
     return base
 
 
-@jit
+@jit(cache=True)
 def blend_arrs(arrs, masks):
     '''Must receive no NaNs! That's what masks are for.'''
     mask_sum = sum_arrs(masks)
@@ -358,25 +364,23 @@ def blend_arrs(arrs, masks):
     return base
 
 
-@jit
-def blend_arrs_with_offsets(arr_shape, arrs, mask_shape, masks, offsets):
+@jit(cache=True)
+def blend_arrs_with_offsets(arr_shape, arrs, masks, offsets):
     '''Must receive no NaNs! That's what masks are for.'''
-    mask_sum = sum_arrs_with_offsets(mask_shape, masks, offsets)
-    # print 'blend_with_offsets', arr_shape, mask_shape
+    mask_sum = sum_arrs_with_offsets(arr_shape[:2], masks, offsets)
 
     base = np.zeros(arr_shape)
     for arr, mask, offset in zip(arrs, masks, offsets):
         mask_sum_cropped = (
             mask_sum[offset[1]:offset[1] + arr.shape[0], offset[0]:offset[0] + arr.shape[1]]
         )
-        # print arr.shape, mask.shape, offset, mask_sum_cropped.shape
         base[offset[1]:offset[1] + arr.shape[0], offset[0]:offset[0] + arr.shape[1]] += (
             arr * np.true_divide(mask, mask_sum_cropped)[:, :, np.newaxis]
         )
     return base
 
 
-@jit
+@jit(cache=True)
 def nan_to_zero(arr, inplace=False):
     '''numpy's "nan_to_num" is crazy-slow, and doesn't have an inplace option.'''
     copy = arr if inplace else arr.copy()
@@ -397,21 +401,33 @@ def blend(images, masks):
     return Image(arr, system)
 
 
-def blend_with_offsets(dims, images, masks, offsets):
-    system = images[0].system
-    # TODO: put the offsets thing into this function, with detection offset
-    # assert all(image.system == system for image in images)
-    # assert all(mask.system == system for mask in masks)
+def blend_subimages(images, masks, output_system, output_dims):
+    # Make sure masks are aligned with images
+    assert all(image.system == mask.system for image, mask in zip(images, masks))
 
-    # print [i.array.shape for i in images]
-    # print [m.array.shape for m in masks]
-    # print offsets
+    offsets = tuple(image.system.translation_origin(output_system).astype(int)
+                    for image in images)
 
     arr = blend_arrs_with_offsets(
-        (dims[1], dims[0], 3),
+        (output_dims[1], output_dims[0], 3),
         tuple(nan_to_zero(image.array).astype(np.float64) for image in images),
-        (dims[1], dims[0]),
         tuple(nan_to_zero(mask.array).astype(np.float64) for mask in masks),
         offsets)
 
-    return Image(arr, system)
+    return Image(arr, output_system)
+
+
+def sum_subimages(images, output_system, output_dims):
+    offsets = tuple(image.system.translation_origin(output_system).astype(int)
+                    for image in images)
+
+    shape = (
+        (output_dims[1], output_dims[0], 3)
+        if len(images[0].array.shape) > 2
+        else (output_dims[1], output_dims[0]))
+    arr = sum_arrs_with_offsets(
+        shape,
+        tuple(image.array for image in images),
+        offsets)
+
+    return Image(arr, output_system)

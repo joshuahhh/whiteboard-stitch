@@ -1,8 +1,16 @@
 from collections import namedtuple
+import hashlib
+
 import cv2
 import numpy as np
 
 from spimage import Image, ImagePoint, ImageFunction, corners
+from lockable_shelf import LockableShelf
+
+_features_shelf = LockableShelf('features-shelve')
+
+
+_DMatch = namedtuple('_DMatch', ['queryIdx', 'trainIdx', 'imgIdx', 'distance'])
 
 
 Feature = namedtuple('Feature', ['point', 'descriptor', 'source_image'])
@@ -37,19 +45,62 @@ class Homography(ImageFunction):
 
 
 def find_features(image):
-    detector = cv2.xfeatures2d.SIFT_create()
-    kps, descriptors = detector.detectAndCompute(image.array, None)
-    return [Feature(point=ImagePoint(kp.pt, image.system),
+    image_hash = hashlib.sha1(image.array).digest()
+
+    pts = None
+    with _features_shelf.open() as d:
+        if image_hash in d:
+            print 'Getting features from cache!'
+            pts, descriptors = d[image_hash]
+    if not pts:
+        print 'Features not in cache; computing.'
+
+        detector = cv2.xfeatures2d.SIFT_create()
+        kps, descriptors = detector.detectAndCompute(image.array, None)
+        pts = [kp.pt for kp in kps]
+
+        with _features_shelf.open() as d:
+            d[image_hash] = (pts, descriptors)
+
+    return [Feature(point=ImagePoint(pt, image.system),
                     descriptor=descriptor, source_image=image)
-            for (kp, descriptor) in zip(kps, descriptors)]
+            for (pt, descriptor) in zip(pts, descriptors)]
 
 
 def find_homography(features1, features2, ratio=0.75, reproj_thresh=4.0):
     descriptors1 = np.array([f.descriptor for f in features1])
     descriptors2 = np.array([f.descriptor for f in features2])
 
-    matcher = cv2.DescriptorMatcher_create("BruteForce")
-    raw_matches = matcher.knnMatch(descriptors1, descriptors2, 2)
+    descriptors_hasher = hashlib.sha1()
+    descriptors_hasher.update(descriptors1)
+    descriptors_hasher.update(descriptors2)
+    descriptors_hash = descriptors_hasher.digest()
+
+    raw_matches = None
+    with _features_shelf.open() as d:
+        if descriptors_hash in d:
+            print 'Getting matches from cache!'
+            raw_matches = d[descriptors_hash]
+    if not raw_matches:
+        print 'Matches not in cache; computing.'
+
+        matcher = cv2.DescriptorMatcher_create("BruteForce")
+        matcher_output = matcher.knnMatch(descriptors1, descriptors2, 2)
+        raw_matches = [
+            [
+                _DMatch(
+                    queryIdx = match.queryIdx,
+                    trainIdx = match.trainIdx,
+                    imgIdx = match.imgIdx,
+                    distance = match.distance)
+                for match in match_list
+            ]
+            for match_list in matcher_output
+        ]
+
+        with _features_shelf.open() as d:
+            d[descriptors_hash] = raw_matches
+
     matches = []
     for m in raw_matches:
         # ensure the distance is within a certain ratio of each
@@ -77,7 +128,7 @@ def find_homography(features1, features2, ratio=0.75, reproj_thresh=4.0):
                           inlier_matches=inlier_matches)
 
     # otherwise, no homograpy could be computed
-    return None
+    raise Exception('could not find homography!')
 
 
 def homography_mask(src_system, src_dims, H, dst_system, dst_dims, erode=3):
