@@ -68,6 +68,7 @@ class StitchingJob:
             self.c_homs = pool.map(lambda c_features_result:
                 find_homography(c_features_result.get(), self.e_features),
                 c_features_results)
+            print self.c_homs
             self.c_features = [
                 c_features_result.get()
                 for c_features_result in c_features_results]

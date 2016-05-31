@@ -56,15 +56,14 @@ if __name__ == "__main__":
     else:
         raise Exception('Unknown partition_method')
 
-    if '-n' in args.flags:
-        # Don't actually stitch it.
-        sys.exit(0)
-
-
     canvas = job.establishing.copy()  # .resize(scale=job.canvas_scale)
     job.draw_mask_boundaries_onto(canvas)
     job.draw_masks_onto(canvas)
     canvas.save(os.path.join(output_dir, 'masks.png'))
+
+    if '-n' in args.flags:
+        # Don't actually stitch it.
+        sys.exit(0)
 
     if 'detail_transfer_sigma_color' in c_stitching:
         # For the closure:
