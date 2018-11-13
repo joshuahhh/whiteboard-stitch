@@ -1,0 +1,7 @@
+.DS_Store
+.dropbox
+.ipynb_checkpoints
+__pycache__
+*.pyc
+
+_library

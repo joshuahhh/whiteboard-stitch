@@ -259,7 +259,7 @@ class StitchingJob:
         return canvas
 
     def draw_voronoi_diagram_onto(self, canvas, color=(0, 255, 0), width=10):
-        for facet in self.c_voroni_facets:
+        for facet in self.c_voronoi_facets:
             canvas.draw_polyline(clip(facet, canvas.corners()),
                                  color=color, width=width, inplace=True)
         return canvas

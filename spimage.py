@@ -338,29 +338,10 @@ def composite(background_image, foreground_image, mask, inplace=False):
 
 
 @jit(nopython=True, cache=True)
-def sum_arrs(arrs):
-    base = np.zeros(arrs[0].shape)
-    for arr in arrs:
-        base += arr
-    return base
-
-
-@jit(nopython=True, cache=True)
 def sum_arrs_with_offsets(shape, arrs, offsets):
     base = np.zeros(shape)
     for arr, offset in zip(arrs, offsets):
         base[offset[1]:offset[1] + arr.shape[0], offset[0]:offset[0] + arr.shape[1]] += arr
-    return base
-
-
-@jit(cache=True)
-def blend_arrs(arrs, masks):
-    '''Must receive no NaNs! That's what masks are for.'''
-    mask_sum = sum_arrs(masks)
-
-    base = np.zeros(arrs[0].shape)
-    for arr, mask in zip(arrs, masks):
-        base += arr * np.true_divide(mask, mask_sum)[:, :, np.newaxis]
     return base
 
 
@@ -386,19 +367,6 @@ def nan_to_zero(arr, inplace=False):
     copy = arr if inplace else arr.copy()
     copy[np.isnan(copy)] = 0
     return copy
-
-
-def blend(images, masks):
-    system = images[0].system
-    assert all(image.system == system for image in images)
-    assert all(mask.system == system for mask in masks)
-
-    arr = blend_arrs(tuple(nan_to_zero(image.array).astype(np.float64)
-                        for image in images),
-                     tuple(nan_to_zero(mask.array).astype(np.float64)
-                        for mask in masks))
-
-    return Image(arr, system)
 
 
 def blend_subimages(images, masks, output_system, output_dims):

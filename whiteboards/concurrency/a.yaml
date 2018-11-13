@@ -1,0 +1,10 @@
+files:
+  establishing: establishing.jpg
+  closes: closes/*.jpg
+feature_detection:
+  downsample_scale: 0.5
+partition_method: stacked
+stitching:
+  canvas_scale: 2
+  detail_transfer_radius: 3
+  edge_blend_radius: 5
